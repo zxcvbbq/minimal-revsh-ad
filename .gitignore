@@ -1,5 +1,10 @@
-vuln
-vuln.asm
 __pycache__/
+*.pyc
 .pytest_cache/
 
+# linux-memexec build artifacts
+linux-memexec/memexec
+linux-memexec/shell
+linux-memexec/sc.bin
+linux-memexec/sc.asm
+linux-memexec/sc.h
