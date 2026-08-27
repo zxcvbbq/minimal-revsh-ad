@@ -10,6 +10,3 @@ Attack-Defense CTF reverse-shell tooling. Two tools, one repo:
   and `make_shell.py` (a single self-deleting binary that injects the
   revshell into an existing process, so no new PID appears).
 
-See each folder's `README.md` for usage.
-
-Use only on systems and CTF targets where you have authorization.

